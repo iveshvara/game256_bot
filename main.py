@@ -30,7 +30,6 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     cursor.execute(f'SELECT i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
 
-    text = ''
     inline_kb = InlineKeyboardMarkup(row_width=1)
     massive = []
     massive_line = []
