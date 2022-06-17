@@ -9,6 +9,7 @@ import locale
 
 from settings import TOKEN
 
+
 bot = Bot(TOKEN)
 dp = Dispatcher(bot)
 connect = sqlite3.connect('base.db')
