@@ -9,7 +9,6 @@ import locale
 
 from settings import TOKEN
 
-
 bot = Bot(TOKEN)
 dp = Dispatcher(bot)
 connect = sqlite3.connect('base.db')
@@ -25,11 +24,12 @@ process_icon = ''
 
 
 async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
-    global process_icon
+    global process_icon, in_progress
 
     cursor.execute(f'SELECT i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
 
+    text = ''
     inline_kb = InlineKeyboardMarkup(row_width=1)
     massive = []
     massive_line = []
@@ -48,6 +48,16 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
                     max_score = '🏆 ' + locale.format_string('%d', i, grouping=True) + ' '
                 elif count == 2:
                     current_score = '🏅 ' + locale.format_string('%d', i, grouping=True) + ' '
+                elif count == len(line):
+                    if in_progress[0] and in_progress[1] == uid:
+                        if len(process_icon) == 6:
+                            process_icon = ''
+                        process_icon += '.'
+                        text_button = process_icon
+                    else:
+                        process_icon = ''
+                        text_button = str(i)
+                    massive_next.append(InlineKeyboardButton(text=text_button, callback_data='next ' + str(count)))
                 else:
                     massive_next.append(InlineKeyboardButton(text=str(i), callback_data='next ' + str(count)))
         else:
@@ -68,11 +78,6 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     for massive_line in massive:
         inline_kb.row(*massive_line)
 
-    if in_progress[0] and in_progress[1] == uid:
-        process_icon += '\.'
-    else:
-        process_icon = ''
-
     if mood < 5:
         mood_icon = '😎'
     elif mood < 10:
@@ -84,11 +89,11 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     elif mood < 17:
         mood_icon = '😃'
     elif mood < 20:
-        mood_icon = '😀'
+        mood_icon = '😳'
     elif mood < 22:
-        mood_icon = '🤯'
-    elif mood < 23:
         mood_icon = '😬'
+    elif mood < 23:
+        mood_icon = '🤯'
     elif mood < 24:
         mood_icon = '😰'
     elif mood < 25:
@@ -97,7 +102,7 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
         mood_icon = '😵'
 
     # f'{text:<33}'
-    text = '`' + max_score + current_score + '   ' + mood_icon + ' ' + process_icon + '`'
+    text = '`' + max_score + current_score + '   ' + mood_icon + '`'
 
     # changes = last_text != text or last_inline_kb != inline_kb
     changes = True
@@ -149,9 +154,11 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
             plucking_zero.append([line, column])
 
     if found > 0:
-        meaning *= 2 * found
+        for _ in range (found):
+            meaning *= 2
         if meaning > MAX_NUMBER:
             meaning = 0
+            plucking_zero.append([new_line, column])
         matrix[new_line][column] = meaning
         cursor.execute(f'UPDATE matrix SET i{column} = {meaning} WHERE i = {new_line} AND id = {uid}')
         connect.commit()
@@ -278,7 +285,10 @@ async def undo(callback: CallbackQuery):
 
 @dp.callback_query_handler(text='undo')
 async def undo(callback: CallbackQuery):
+    global in_progress
+    
     uid = callback.from_user.id
+    in_progress[0], in_progress[1] = False, ''
 
     await save_recover_undo(uid, save=False)
     
@@ -300,6 +310,9 @@ async def callback_query_handler(callback: CallbackQuery):
 
     cursor.execute(f'SELECT i, i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
+    
+    cursor.execute(f'UPDATE matrix SET i5 = " " WHERE i = 0 AND id = {uid}')
+    connect.commit()
 
     max_score = matrix[0][1]
     current_score = matrix[0][2] + 1
@@ -325,6 +338,10 @@ async def callback_query_handler(callback: CallbackQuery):
         if new_meaning == current_meaning:
             current_line = 1
             new_meaning *= 2
+            if new_meaning > MAX_NUMBER:
+                new_meaning = 0
+                cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = 1 AND id = {uid}')
+                connect.commit()
         else:
             return
 
