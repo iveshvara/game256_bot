@@ -290,9 +290,14 @@ async def undo(callback: CallbackQuery):
     uid = callback.from_user.id
     in_progress[0], in_progress[1] = False, ''
 
+    undo_number = await get_undo(uid)
+
+    if undo_number == '00':
+        await callback.answer()
+        return
+
     await save_recover_undo(uid, save=False)
     
-    undo_number = await get_undo(uid)
     await send_message(callback, uid, undo_number, '', '', False)
     await callback.answer()
 
@@ -303,6 +308,7 @@ async def callback_query_handler(callback: CallbackQuery):
     uid = callback.from_user.id
 
     if in_progress[0] and in_progress[1] == uid:
+        await callback.answer()
         return
     in_progress[0], in_progress[1] = True, uid
 
@@ -311,9 +317,6 @@ async def callback_query_handler(callback: CallbackQuery):
     cursor.execute(f'SELECT i, i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
     
-    cursor.execute(f'UPDATE matrix SET i5 = " " WHERE i = 0 AND id = {uid}')
-    connect.commit()
-
     max_score = matrix[0][1]
     current_score = matrix[0][2] + 1
     cursor.execute(f'UPDATE matrix SET i1 = {max_score}, i2 = {current_score} WHERE i = 0 AND id = {uid}')
@@ -343,7 +346,12 @@ async def callback_query_handler(callback: CallbackQuery):
                 cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = 1 AND id = {uid}')
                 connect.commit()
         else:
+            await callback.answer()
+            in_progress[0], in_progress[1] = False, ''
             return
+
+    cursor.execute(f'UPDATE matrix SET i5 = 0 WHERE i = 0 AND id = {uid}')
+    connect.commit()
 
     matrix_list = list()
     for line in matrix:
