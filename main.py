@@ -23,13 +23,146 @@ in_progress = [False, '']
 process_icon = ''
 
 
+@dp.callback_query_handler(lambda x: x.data and x.data.startswith('column '))
+async def callback_query_handler(callback: CallbackQuery):
+    global in_progress
+    uid = callback.from_user.id
+
+    if in_progress[0] and in_progress[1] == uid:
+        await callback.answer()
+        return
+    in_progress[0], in_progress[1] = True, uid
+
+    await save_recover_undo(uid)
+
+    cursor.execute(f'SELECT i, i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
+    matrix = cursor.fetchall()
+
+    max_score = matrix[0][1]
+    current_score = matrix[0][2] + 1
+    cursor.execute(f'UPDATE matrix SET i1 = {max_score}, i2 = {current_score} WHERE i = 0 AND id = {uid}')
+    connect.commit()
+
+    current_column = int(callback.data[-1])
+    current_line = 5
+    new_meaning = 0
+    current_meaning = 0
+
+    index = -1
+    for line in matrix:
+        index += 1
+        current_meaning = line[current_column]
+        if index == 0:
+            new_meaning = line[-1]
+        elif current_meaning != 0:
+            current_line = index - 1
+            break
+
+    if current_line == 0:
+        if new_meaning == current_meaning:
+            current_line = 1
+            new_meaning *= 2
+            if new_meaning > MAX_NUMBER:
+                new_meaning = 0
+                cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = 1 AND id = {uid}')
+                connect.commit()
+        else:
+            await callback.answer()
+            in_progress[0], in_progress[1] = False, ''
+            return
+
+    cursor.execute(f'UPDATE matrix SET i5 = 0 WHERE i = 0 AND id = {uid}')
+    connect.commit()
+
+    matrix_list = list()
+    for line in matrix:
+        matrix_list.append(list(line))
+
+    undo_number = await get_undo(uid)
+    text, inline_kb = await find_coincidences_recursively(callback, uid, matrix_list, new_meaning, current_column,
+                                                          current_line, undo_number)
+
+    meaning = await generate_meaning()
+    line = matrix[0]
+    for i in range(3, 6):
+        cursor.execute(f'UPDATE matrix SET i{i} = {meaning} WHERE i = 0 AND id = {uid}')
+        connect.commit()
+        meaning = line[i]
+
+    in_progress[0], in_progress[1] = False, ''
+    await send_message(callback, uid, undo_number, text, inline_kb, False)
+    await callback.answer()
+
+
+@dp.callback_query_handler(lambda x: x.data and x.data.startswith('next '))
+async def undo(callback: CallbackQuery):
+    uid = callback.from_user.id
+
+    i = callback.data.replace('next ', '')
+    cursor.execute(f'SELECT i5 FROM matrix WHERE i = 0 AND id = {uid}')
+    old_meaning = cursor.fetchone()[0]
+    new_meaning = 0
+
+    if i == '5':
+        new_meaning = old_meaning
+        while new_meaning == old_meaning:
+            new_meaning = await generate_meaning()
+    elif i == '4':
+        if old_meaning == MAX_NUMBER:
+            new_meaning = 2
+        else:
+            new_meaning = old_meaning * 2
+    elif i == '3':
+        if old_meaning == 2:
+            new_meaning = MAX_NUMBER
+        else:
+            new_meaning = old_meaning / 2
+
+    cursor.execute(f'UPDATE matrix SET i5 = {new_meaning} WHERE i = 0 AND id = {uid}')
+    connect.commit()
+
+    undo_number = await get_undo(uid)
+    await send_message(callback, uid, undo_number, '', '', False)
+    await callback.answer()
+
+
+@dp.callback_query_handler(text='undo')
+async def undo(callback: CallbackQuery):
+    global in_progress
+
+    uid = callback.from_user.id
+    in_progress[0], in_progress[1] = False, ''
+
+    undo_number = await get_undo(uid)
+
+    if undo_number == '00':
+        await callback.answer()
+        return
+
+    await save_recover_undo(uid, save=False)
+
+    undo_number = await get_undo(uid)
+    await send_message(callback, uid, undo_number, '', '', False)
+    await callback.answer()
+
+
+async def generate_meaning(use_buns=False):
+    if use_buns:
+        beginning_of_the_range = -5
+    else:
+        beginning_of_the_range = 1
+
+    meaning = 2 ** randrange(beginning_of_the_range, MAX_NUMBER_STEP)
+
+    return meaning
+
+
 async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     global process_icon, in_progress
 
     cursor.execute(f'SELECT i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
 
-    text = ''
     inline_kb = InlineKeyboardMarkup(row_width=1)
     massive = []
     massive_line = []
@@ -250,128 +383,6 @@ async def get_undo(uid):
     return undo_number
 
 
-@dp.callback_query_handler(lambda x: x.data and x.data.startswith('next '))
-async def undo(callback: CallbackQuery):
-    uid = callback.from_user.id
-
-    i = callback.data.replace('next ', '')
-    # cursor.execute(f'SELECT i{i} FROM matrix WHERE i = 0 AND id = {uid}')
-    cursor.execute(f'SELECT i5 FROM matrix WHERE i = 0 AND id = {uid}')
-    old_meaning = cursor.fetchone()[0]
-
-    if i == '5':
-        new_meaning = old_meaning
-        while new_meaning == old_meaning:
-            new_meaning = 2 ** randrange(1, MAX_NUMBER_STEP)
-    elif i == '4':
-        if old_meaning == MAX_NUMBER:
-            new_meaning = 2
-        else:
-            new_meaning = old_meaning * 2
-    elif i == '3':
-        if old_meaning == 2:
-            new_meaning = MAX_NUMBER
-        else:
-            new_meaning = old_meaning / 2
-
-    # cursor.execute(f'UPDATE matrix SET i{i} = {new_meaning} WHERE i = 0 AND id = {uid}')
-    cursor.execute(f'UPDATE matrix SET i5 = {new_meaning} WHERE i = 0 AND id = {uid}')
-    connect.commit()
-
-    undo_number = await get_undo(uid)
-    await send_message(callback, uid, undo_number, '', '', False)
-    await callback.answer()
-
-
-@dp.callback_query_handler(text='undo')
-async def undo(callback: CallbackQuery):
-    global in_progress
-    
-    uid = callback.from_user.id
-    in_progress[0], in_progress[1] = False, ''
-
-    undo_number = await get_undo(uid)
-
-    if undo_number == '00':
-        await callback.answer()
-        return
-
-    await save_recover_undo(uid, save=False)
-    
-    await send_message(callback, uid, undo_number, '', '', False)
-    await callback.answer()
-
-
-@dp.callback_query_handler(lambda x: x.data and x.data.startswith('column '))
-async def callback_query_handler(callback: CallbackQuery):
-    global in_progress
-    uid = callback.from_user.id
-
-    if in_progress[0] and in_progress[1] == uid:
-        await callback.answer()
-        return
-    in_progress[0], in_progress[1] = True, uid
-
-    await save_recover_undo(uid)
-
-    cursor.execute(f'SELECT i, i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
-    matrix = cursor.fetchall()
-    
-    max_score = matrix[0][1]
-    current_score = matrix[0][2] + 1
-    cursor.execute(f'UPDATE matrix SET i1 = {max_score}, i2 = {current_score} WHERE i = 0 AND id = {uid}')
-    connect.commit()
-
-    current_column = int(callback.data[-1])
-    current_line = 5
-    new_meaning = 0
-    current_meaning = 0
-
-    index = -1
-    for line in matrix:
-        index += 1
-        current_meaning = line[current_column]
-        if index == 0:
-            new_meaning = line[-1]
-        elif current_meaning != 0:
-            current_line = index - 1
-            break
-
-    if current_line == 0:
-        if new_meaning == current_meaning:
-            current_line = 1
-            new_meaning *= 2
-            if new_meaning > MAX_NUMBER:
-                new_meaning = 0
-                cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = 1 AND id = {uid}')
-                connect.commit()
-        else:
-            await callback.answer()
-            in_progress[0], in_progress[1] = False, ''
-            return
-
-    cursor.execute(f'UPDATE matrix SET i5 = 0 WHERE i = 0 AND id = {uid}')
-    connect.commit()
-
-    matrix_list = list()
-    for line in matrix:
-        matrix_list.append(list(line))
-
-    undo_number = await get_undo(uid)
-    text, inline_kb = await find_coincidences_recursively(callback, uid, matrix_list, new_meaning, current_column, current_line, undo_number)
-
-    meaning = 2 ** randrange(1, MAX_NUMBER_STEP)
-    line = matrix[0]
-    for i in range(3, 6):
-        cursor.execute(f'UPDATE matrix SET i{i} = {meaning} WHERE i = 0 AND id = {uid}')
-        connect.commit()
-        meaning = line[i]
-
-    in_progress[0], in_progress[1] = False, ''
-    await send_message(callback, uid, undo_number, text, inline_kb, False)
-    await callback.answer()
-
-
 @dp.message_handler(commands=['start'])
 async def command_start(message: Message):
     uid = message.from_user.id
@@ -428,7 +439,8 @@ async def command_start(message: Message):
                        '0, 0, 0, 0, 0)')
         connect.commit()
     for i in range(3, 6):
-        cursor.execute(f'UPDATE matrix SET i{i} = {2 ** randrange(1, MAX_NUMBER_STEP)} WHERE i = 0 AND id = {uid}')
+        meaning = await generate_meaning()
+        cursor.execute(f'UPDATE matrix SET i{i} = {meaning} WHERE i = 0 AND id = {uid}')
         connect.commit()
     cursor.execute(f'UPDATE matrix SET i1 = {max_score} WHERE i = 0 AND id = {uid}')
     connect.commit()
