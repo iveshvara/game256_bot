@@ -21,11 +21,14 @@ MAX_NUMBER_STEP = 10
 
 in_progress = [False, '']
 process_icon = ''
+mood = 0
+zero_buns_are_active = False
+zero_buns_meaning = 0
 
 
 @dp.callback_query_handler(lambda x: x.data and x.data.startswith('column '))
 async def callback_query_handler(callback: CallbackQuery):
-    global in_progress
+    global in_progress, zero_buns_are_active, zero_buns_meaning
     uid = callback.from_user.id
 
     if in_progress[0] and in_progress[1] == uid:
@@ -34,6 +37,11 @@ async def callback_query_handler(callback: CallbackQuery):
     in_progress[0], in_progress[1] = True, uid
 
     await save_recover_undo(uid)
+
+    if zero_buns_are_active:
+        zero_buns_are_active = False
+        cursor.execute(f'UPDATE matrix SET i5 = {zero_buns_meaning} WHERE i = 0 AND id = {uid}')
+        connect.commit()
 
     cursor.execute(f'SELECT i, i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
@@ -58,7 +66,10 @@ async def callback_query_handler(callback: CallbackQuery):
             current_line = index - 1
             break
 
-    if current_line == 0:
+    # if zero_buns_are_active:
+    #     new_meaning = zero_buns_meaning
+
+    if new_meaning > 0 and current_line == 0:
         if new_meaning == current_meaning:
             current_line = 1
             new_meaning *= 2
@@ -82,7 +93,7 @@ async def callback_query_handler(callback: CallbackQuery):
     text, inline_kb = await find_coincidences_recursively(callback, uid, matrix_list, new_meaning, current_column,
                                                           current_line, undo_number)
 
-    meaning = await generate_meaning()
+    meaning = await generate_meaning(True)
     line = matrix[0]
     for i in range(3, 6):
         cursor.execute(f'UPDATE matrix SET i{i} = {meaning} WHERE i = 0 AND id = {uid}')
@@ -96,11 +107,20 @@ async def callback_query_handler(callback: CallbackQuery):
 
 @dp.callback_query_handler(lambda x: x.data and x.data.startswith('next '))
 async def undo(callback: CallbackQuery):
+    if not zero_buns_are_active:
+        await callback.answer()
+        return
+
+    global zero_buns_meaning
+
     uid = callback.from_user.id
 
     i = callback.data.replace('next ', '')
-    cursor.execute(f'SELECT i5 FROM matrix WHERE i = 0 AND id = {uid}')
-    old_meaning = cursor.fetchone()[0]
+    # cursor.execute(f'SELECT i5 FROM matrix WHERE i = 0 AND id = {uid}')
+    # old_meaning = cursor.fetchone()[0]
+    if zero_buns_meaning == 0:
+        zero_buns_meaning = await generate_meaning()
+    old_meaning = zero_buns_meaning
     new_meaning = 0
 
     if i == '5':
@@ -111,15 +131,16 @@ async def undo(callback: CallbackQuery):
         if old_meaning == MAX_NUMBER:
             new_meaning = 2
         else:
-            new_meaning = old_meaning * 2
+            new_meaning = int(old_meaning * 2)
     elif i == '3':
         if old_meaning == 2:
             new_meaning = MAX_NUMBER
         else:
-            new_meaning = old_meaning / 2
+            new_meaning = int(old_meaning / 2)
 
-    cursor.execute(f'UPDATE matrix SET i5 = {new_meaning} WHERE i = 0 AND id = {uid}')
-    connect.commit()
+    # cursor.execute(f'UPDATE matrix SET i5 = {new_meaning} WHERE i = 0 AND id = {uid}')
+    # connect.commit()
+    zero_buns_meaning = new_meaning
 
     undo_number = await get_undo(uid)
     await send_message(callback, uid, undo_number, '', '', False)
@@ -128,10 +149,13 @@ async def undo(callback: CallbackQuery):
 
 @dp.callback_query_handler(text='undo')
 async def undo(callback: CallbackQuery):
-    global in_progress
+    global in_progress, zero_buns_are_active, zero_buns_meaning
+
+    in_progress[0], in_progress[1] = False, ''
+    zero_buns_are_active = False
+    zero_buns_meaning = 0
 
     uid = callback.from_user.id
-    in_progress[0], in_progress[1] = False, ''
 
     undo_number = await get_undo(uid)
 
@@ -147,18 +171,19 @@ async def undo(callback: CallbackQuery):
 
 
 async def generate_meaning(use_buns=False):
-    if use_buns:
-        beginning_of_the_range = -5
+    if use_buns and mood > 12:
+        meaning = randrange(-5, MAX_NUMBER_STEP, 1)
+        if meaning > 0:
+            meaning = 2 ** meaning
     else:
-        beginning_of_the_range = 1
-
-    meaning = 2 ** randrange(beginning_of_the_range, MAX_NUMBER_STEP)
+        meaning = 2 ** randrange(0, MAX_NUMBER_STEP, 1)
 
     return meaning
 
 
 async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
-    global process_icon, in_progress
+    global process_icon, in_progress, mood, zero_buns_are_active, zero_buns_meaning
+    mood = 0
 
     cursor.execute(f'SELECT i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
@@ -170,7 +195,6 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     current_score = 0
     max_score = 0
     uniqueness_button = 0
-    mood = 0
 
     for line in matrix:
         if matrix.index(line) == 0:
@@ -188,11 +212,20 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
                         process_icon += '.'
                         text_button = process_icon
                     else:
-                        process_icon = ''
-                        text_button = str(i)
+                        if zero_buns_are_active or i == 0:
+                            zero_buns_are_active = True
+                            if zero_buns_meaning == 0:
+                                zero_buns_meaning = await generate_meaning()
+                            text_button = zero_buns_meaning
+                            massive_next.clear()
+                            massive_next.append(InlineKeyboardButton(text='➖', callback_data='next 3'))
+                            massive_next.append(InlineKeyboardButton(text='➕', callback_data='next 4'))
+                        else:
+                            process_icon = ''
+                            text_button = await get_icon(i)
                     massive_next.append(InlineKeyboardButton(text=text_button, callback_data='next ' + str(count)))
-                else:
-                    massive_next.append(InlineKeyboardButton(text=str(i), callback_data='next ' + str(count)))
+                elif not zero_buns_are_active:
+                    massive_next.append(InlineKeyboardButton(text=await get_icon(i), callback_data='next ' + str(count)))
         else:
             column = 0
             for i in line:
@@ -201,7 +234,7 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
                 if i == 0:
                     meaning = ' '
                 else:
-                    meaning = i
+                    meaning = await get_icon(i)
                     mood += 1
                 massive_line.append(InlineKeyboardButton(text=meaning, callback_data='column ' + str(uniqueness_button) + ' ' + str(column)))
             massive.append(massive_line)
@@ -236,11 +269,32 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
 
     # f'{text:<33}'
     text = '`' + max_score + current_score + '   ' + mood_icon + '`'
+    if zero_buns_are_active:
+        text += '      mode: ' + await get_icon(0)
 
     # changes = last_text != text or last_inline_kb != inline_kb
     changes = True
 
     return text, inline_kb, changes
+
+
+async def get_icon(meaning):
+    if meaning == 0:
+        result = '🎛'#'🧞‍♂️'
+    elif meaning == -1:
+        result = '🧨'
+    elif meaning == -2:
+        result = '🎳'
+    elif meaning == -3:
+        result = '🪓'
+    elif meaning == -4:
+        result = '🎱'
+    elif meaning == -5:
+        result = '✖️'
+    else:
+        result = str(meaning)
+
+    return result
 
 
 async def find_coincidences_recursively(callback, uid, matrix, meaning, column, line, undo_number):
@@ -249,56 +303,116 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
     if meaning == 0:
         return text, inline_kb
 
-    if matrix[line][column] != meaning:
-        matrix[line][column] = meaning
-        cursor.execute(f'UPDATE matrix SET i{column} = {meaning} WHERE i = {line} AND id = {uid}')
-        connect.commit()
-        await send_message(callback, uid, undo_number, text, inline_kb, False)
-
-    new_line = line
-    found = 0
     plucking_zero = []
+    new_line = line
 
-    if column != 1 and matrix[line][column - 1] == meaning:
-        found += 1
-        matrix[line][column - 1] = 0
-        cursor.execute(f'UPDATE matrix SET i{column - 1} = 0 WHERE i = {line} AND id = {uid}')
-        connect.commit()
-        plucking_zero.append([line, column - 1])
+    if meaning > 0:
 
-        await send_message(callback, uid, undo_number, text, inline_kb)
+        if matrix[line][column] != meaning:
+            matrix[line][column] = meaning
+            cursor.execute(f'UPDATE matrix SET i{column} = {meaning} WHERE i = {line} AND id = {uid}')
+            connect.commit()
+            await send_message(callback, uid, undo_number, text, inline_kb, False)
 
-    if column != len(matrix[line]) - 1 and matrix[line][column + 1] == meaning:
-        found += 1
-        matrix[line][column + 1] = 0
-        cursor.execute(f'UPDATE matrix SET i{column + 1} = 0 WHERE i = {line} AND id = {uid}')
-        connect.commit()
-        plucking_zero.append([line, column + 1])
+        found = 0
 
-        await send_message(callback, uid, undo_number, text, inline_kb)
+        if column != 1 and matrix[line][column - 1] == meaning:
+            found += 1
+            matrix[line][column - 1] = 0
+            cursor.execute(f'UPDATE matrix SET i{column - 1} = 0 WHERE i = {line} AND id = {uid}')
+            connect.commit()
+            plucking_zero.append([line, column - 1])
 
-    if line != len(matrix) - 1 and matrix[line + 1][column] == meaning:
-        found += 1
-        matrix[line][column] = 0
-        new_line = line + 1
-        cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {line} AND id = {uid}')
-        connect.commit()
-        if line != 1 and matrix[line-1][column] != 0:
-            plucking_zero.append([line, column])
+            await send_message(callback, uid, undo_number, text, inline_kb)
 
-    if found > 0:
-        for _ in range (found):
-            meaning *= 2
-        if meaning > MAX_NUMBER:
-            meaning = 0
-            plucking_zero.append([new_line, column])
-        matrix[new_line][column] = meaning
-        cursor.execute(f'UPDATE matrix SET i{column} = {meaning} WHERE i = {new_line} AND id = {uid}')
-        connect.commit()
+        if column != len(matrix[line]) - 1 and matrix[line][column + 1] == meaning:
+            found += 1
+            matrix[line][column + 1] = 0
+            cursor.execute(f'UPDATE matrix SET i{column + 1} = 0 WHERE i = {line} AND id = {uid}')
+            connect.commit()
+            plucking_zero.append([line, column + 1])
 
-        await send_message(callback, uid, undo_number, text, inline_kb)
+            await send_message(callback, uid, undo_number, text, inline_kb)
 
-        text, inline_kb = await find_coincidences_recursively(callback, uid, matrix, meaning, column, new_line, undo_number)
+        if line != len(matrix) - 1 and matrix[line + 1][column] == meaning:
+            found += 1
+            matrix[line][column] = 0
+            new_line = line + 1
+            cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {line} AND id = {uid}')
+            connect.commit()
+            if line != 1 and matrix[line - 1][column] != 0:
+                plucking_zero.append([line, column])
+
+        if line != 1 and matrix[line - 1][column] != 0 and matrix[line - 1][column] == meaning:
+            found += 1
+            matrix[line - 1][column] = 0
+            plucking_zero.append([line - 1, column])
+            cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {line - 1} AND id = {uid}')
+            connect.commit()
+            new_line = line
+            if line != 1 and matrix[line-1][column] != 0:
+                plucking_zero.append([line, column])
+
+        if found > 0:
+            for _ in range (found):
+                meaning *= 2
+            if meaning > MAX_NUMBER:
+                meaning = 0
+                plucking_zero.append([new_line, column])
+            matrix[new_line][column] = meaning
+            cursor.execute(f'UPDATE matrix SET i{column} = {meaning} WHERE i = {new_line} AND id = {uid}')
+            connect.commit()
+
+            await send_message(callback, uid, undo_number, text, inline_kb)
+
+            text, inline_kb = await find_coincidences_recursively(callback, uid, matrix, meaning, column, new_line, undo_number)
+
+    else:  # buns mode
+
+        if meaning == -1:
+            for i in range(-1, 2):
+                for ii in range(-1, 2):
+                    current_line = line + i
+                    current_column = column + ii
+                    if 0 < current_line < 6 and 0 < current_column < 6:
+                        matrix[current_line][current_column] = 0
+                        plucking_zero.append([line + i, current_column])
+                        cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = {current_line} AND id = {uid}')
+                        connect.commit()
+        elif meaning == -2:
+            for i in range(1, 6):
+                matrix[line][i] = 0
+                plucking_zero.append([line, i])
+            cursor.execute(f'UPDATE matrix SET i1 = 0, i2 = 0, i3 = 0, i4 = 0, i5 = 0 WHERE i = {line} AND id = {uid}')
+            connect.commit()
+        elif meaning == -3:
+            for i in range(1, 6):
+                matrix[i][column] = 0
+                plucking_zero.append([i, column])
+                cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {i} AND id = {uid}')
+                connect.commit()
+        elif meaning == -4:
+            desired_value = matrix[line + 1][column]
+            for i in range(1, 6):
+                for ii in range(1, 6):
+                    if matrix[i][ii] == desired_value:
+                        plucking_zero.append([i, ii])
+                        matrix[i][ii] = 0
+                        cursor.execute(f'UPDATE matrix SET i{ii} = 0 WHERE i = {i} AND id = {uid}')
+                        connect.commit()
+        elif meaning == -5:
+            desired_value = matrix[line+1][column]
+            for i in range(1, 6):
+                for ii in range(1, 6):
+                    if matrix[i][ii] == desired_value:
+                        new_meaning = desired_value * 2
+                        matrix[i][ii] = new_meaning
+                        cursor.execute(f'UPDATE matrix SET i{ii} = {new_meaning} WHERE i = {i} AND id = {uid}')
+                        connect.commit()
+
+                        await send_message(callback, uid, undo_number, text, inline_kb)
+
+                        text, inline_kb = await find_coincidences_recursively(callback, uid, matrix, new_meaning, ii, i, undo_number)
 
     for point in plucking_zero:
         column = point[1]
@@ -385,6 +499,12 @@ async def get_undo(uid):
 
 @dp.message_handler(commands=['start'])
 async def command_start(message: Message):
+    global in_progress, zero_buns_are_active, zero_buns_meaning
+
+    in_progress[0], in_progress[1] = False, ''
+    zero_buns_are_active = False
+    zero_buns_meaning = 0
+
     uid = message.from_user.id
 
     connect.execute('CREATE TABLE IF NOT EXISTS matrix(id INTEGER, i INTEGER, '
