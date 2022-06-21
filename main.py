@@ -15,7 +15,7 @@ connect = sqlite3.connect('base.db')
 cursor = connect.cursor()
 
 locale.setlocale(locale.LC_ALL, '')
-SLEEP_TIME = 0.1
+SLEEP_TIME = 0.2
 MAX_NUMBER = 1024
 MAX_NUMBER_STEP = 10
 
@@ -65,9 +65,6 @@ async def callback_query_handler(callback: CallbackQuery):
         elif current_meaning != 0:
             current_line = index - 1
             break
-
-    # if zero_buns_are_active:
-    #     new_meaning = zero_buns_meaning
 
     if new_meaning > 0 and current_line == 0:
         if new_meaning == current_meaning:
@@ -171,12 +168,14 @@ async def undo(callback: CallbackQuery):
 
 
 async def generate_meaning(use_buns=False):
-    if use_buns and mood > 12:
-        meaning = randrange(-5, MAX_NUMBER_STEP, 1)
-        if meaning > 0:
-            meaning = 2 ** meaning
+    maximum_limit = (25 - mood) * 2
+    its_bun = randrange(-mood, maximum_limit, 1)
+    if its_bun < 0:
+        meaning = randrange(-5, 0, 1)
     else:
         meaning = 2 ** randrange(0, MAX_NUMBER_STEP, 1)
+        if meaning == 1:
+            meaning = 0
 
     return meaning
 
@@ -268,9 +267,10 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
         mood_icon = '😵'
 
     # f'{text:<33}'
-    text = '`' + max_score + current_score + '   ' + mood_icon + '`'
+    mode = ''
     if zero_buns_are_active:
-        text += '      mode: ' + await get_icon(0)
+        mode = ' mode: ' + await get_icon(0)
+    text = '`' + max_score + current_score + mode + '   ' + mood_icon + '`'
 
     # changes = last_text != text or last_inline_kb != inline_kb
     changes = True
@@ -342,7 +342,7 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
             connect.commit()
             if line != 1 and matrix[line - 1][column] != 0:
                 plucking_zero.append([line, column])
-
+            
         if line != 1 and matrix[line - 1][column] != 0 and matrix[line - 1][column] == meaning:
             found += 1
             matrix[line - 1][column] = 0
@@ -366,7 +366,7 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
             await send_message(callback, uid, undo_number, text, inline_kb)
 
             text, inline_kb = await find_coincidences_recursively(callback, uid, matrix, meaning, column, new_line, undo_number)
-
+            
     else:  # buns mode
 
         if meaning == -1:
@@ -379,33 +379,39 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                         plucking_zero.append([line + i, current_column])
                         cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = {current_line} AND id = {uid}')
                         connect.commit()
+                        
         elif meaning == -2:
             for i in range(1, 6):
                 matrix[line][i] = 0
                 plucking_zero.append([line, i])
             cursor.execute(f'UPDATE matrix SET i1 = 0, i2 = 0, i3 = 0, i4 = 0, i5 = 0 WHERE i = {line} AND id = {uid}')
             connect.commit()
+            
         elif meaning == -3:
             for i in range(1, 6):
                 matrix[i][column] = 0
                 plucking_zero.append([i, column])
                 cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {i} AND id = {uid}')
                 connect.commit()
+                
         elif meaning == -4:
             desired_value = matrix[line + 1][column]
-            for i in range(1, 6):
+            for i in range(5, 0, -1):
                 for ii in range(1, 6):
                     if matrix[i][ii] == desired_value:
                         plucking_zero.append([i, ii])
                         matrix[i][ii] = 0
                         cursor.execute(f'UPDATE matrix SET i{ii} = 0 WHERE i = {i} AND id = {uid}')
                         connect.commit()
+                                
         elif meaning == -5:
             desired_value = matrix[line+1][column]
             for i in range(1, 6):
                 for ii in range(1, 6):
                     if matrix[i][ii] == desired_value:
                         new_meaning = desired_value * 2
+                        if new_meaning > MAX_NUMBER:
+                            new_meaning = 0
                         matrix[i][ii] = new_meaning
                         cursor.execute(f'UPDATE matrix SET i{ii} = {new_meaning} WHERE i = {i} AND id = {uid}')
                         connect.commit()
