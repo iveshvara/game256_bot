@@ -168,15 +168,15 @@ async def undo(callback: CallbackQuery):
 
 
 async def generate_meaning(use_buns=False):
-    maximum_limit = (25 - mood) * 2
+    maximum_limit = (25 - mood) ** 3
     its_bun = randrange(-mood, maximum_limit, 1)
-    if its_bun < 0:
-        meaning = randrange(-5, 0, 1)
+    if its_bun > 0:
+        meaning = 2 ** randrange(1, MAX_NUMBER_STEP, 1)
     else:
-        meaning = 2 ** randrange(0, MAX_NUMBER_STEP, 1)
-        if meaning == 1:
-            meaning = 0
-
+        minimum_limit = mood // 5 * -1
+        meaning = randrange(minimum_limit, 1, 1)
+        # print(f'minimum_limit: {minimum_limit}')
+    # print(f'mood: {mood}, maximum_limit: {maximum_limit}, its_bun: {its_bun}, meaning: {meaning}')
     return meaning
 
 
@@ -184,7 +184,7 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     global process_icon, in_progress, mood, zero_buns_are_active, zero_buns_meaning
     mood = 0
 
-    cursor.execute(f'SELECT i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
+    cursor.execute(f'SELECT i, i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
 
     inline_kb = InlineKeyboardMarkup(row_width=1)
@@ -193,18 +193,19 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     massive_next = []
     current_score = 0
     max_score = 0
-    uniqueness_button = 0
 
     for line in matrix:
-        if matrix.index(line) == 0:
-            count = 0
+        if line[0] == 0:
+            count = -1
             for i in line:
                 count += 1
-                if count == 1:
+                if count == 0:
+                    continue
+                elif count == 1:
                     max_score = '🏆 ' + locale.format_string('%d', i, grouping=True) + ' '
                 elif count == 2:
                     current_score = '🏅 ' + locale.format_string('%d', i, grouping=True) + ' '
-                elif count == len(line):
+                elif count == len(line) - 1:
                     if in_progress[0] and in_progress[1] == uid:
                         if len(process_icon) == 6:
                             process_icon = ''
@@ -226,16 +227,17 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
                 elif not zero_buns_are_active:
                     massive_next.append(InlineKeyboardButton(text=await get_icon(i), callback_data='next ' + str(count)))
         else:
-            column = 0
+            column = -1
             for i in line:
                 column += 1
-                uniqueness_button += 1
+                if column == 0:
+                    continue
                 if i == 0:
                     meaning = ' '
                 else:
                     meaning = await get_icon(i)
                     mood += 1
-                massive_line.append(InlineKeyboardButton(text=meaning, callback_data='column ' + str(uniqueness_button) + ' ' + str(column)))
+                massive_line.append(InlineKeyboardButton(text=meaning, callback_data='column ' + str(line[0]) + ' ' + str(column)))
             massive.append(massive_line)
             massive_line = []
 
@@ -269,8 +271,8 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
     # f'{text:<33}'
     mode = ''
     if zero_buns_are_active:
-        mode = ' mode: ' + await get_icon(0)
-    text = '`' + max_score + current_score + mode + '   ' + mood_icon + '`'
+        mode = ': ' + await get_icon(0)
+    text = '`' + max_score + current_score + '   ' + mood_icon + mode + '`'
 
     # changes = last_text != text or last_inline_kb != inline_kb
     changes = True
@@ -280,17 +282,17 @@ async def get_current_state(uid, undo_number, last_text='', last_inline_kb=''):
 
 async def get_icon(meaning):
     if meaning == 0:
-        result = '🎛'#'🧞‍♂️'
+        result = '🎛'
     elif meaning == -1:
-        result = '🧨'
-    elif meaning == -2:
-        result = '🎳'
-    elif meaning == -3:
-        result = '🪓'
-    elif meaning == -4:
-        result = '🎱'
-    elif meaning == -5:
         result = '✖️'
+    elif meaning == -2:
+        result = '🎱'
+    elif meaning == -3:
+        result = '🧨'
+    elif meaning == -4:
+        result = '🎳'
+    elif meaning == -5:
+        result = '🪓' 
     else:
         result = str(meaning)
 
@@ -369,49 +371,18 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
             
     else:  # buns mode
 
-        if meaning == -1:
-            for i in range(-1, 2):
-                for ii in range(-1, 2):
-                    current_line = line + i
-                    current_column = column + ii
-                    if 0 < current_line < 6 and 0 < current_column < 6:
-                        matrix[current_line][current_column] = 0
-                        plucking_zero.append([line + i, current_column])
-                        cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = {current_line} AND id = {uid}')
-                        connect.commit()
-                        
-        elif meaning == -2:
-            for i in range(1, 6):
-                matrix[line][i] = 0
-                plucking_zero.append([line, i])
-            cursor.execute(f'UPDATE matrix SET i1 = 0, i2 = 0, i3 = 0, i4 = 0, i5 = 0 WHERE i = {line} AND id = {uid}')
-            connect.commit()
-            
-        elif meaning == -3:
-            for i in range(1, 6):
-                matrix[i][column] = 0
-                plucking_zero.append([i, column])
-                cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {i} AND id = {uid}')
-                connect.commit()
-                
-        elif meaning == -4:
-            desired_value = matrix[line + 1][column]
+        selected_line = int(callback.data[-3])
+        if selected_line == 0:
+            pass
+        elif meaning == -1:
+            desired_value = matrix[selected_line][column]
             for i in range(5, 0, -1):
-                for ii in range(1, 6):
-                    if matrix[i][ii] == desired_value:
-                        plucking_zero.append([i, ii])
-                        matrix[i][ii] = 0
-                        cursor.execute(f'UPDATE matrix SET i{ii} = 0 WHERE i = {i} AND id = {uid}')
-                        connect.commit()
-                                
-        elif meaning == -5:
-            desired_value = matrix[line+1][column]
-            for i in range(1, 6):
                 for ii in range(1, 6):
                     if matrix[i][ii] == desired_value:
                         new_meaning = desired_value * 2
                         if new_meaning > MAX_NUMBER:
                             new_meaning = 0
+                            plucking_zero.append([i, ii])
                         matrix[i][ii] = new_meaning
                         cursor.execute(f'UPDATE matrix SET i{ii} = {new_meaning} WHERE i = {i} AND id = {uid}')
                         connect.commit()
@@ -420,22 +391,59 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
 
                         text, inline_kb = await find_coincidences_recursively(callback, uid, matrix, new_meaning, ii, i, undo_number)
 
+        elif meaning == -2:
+            desired_value = matrix[selected_line][column]
+            for i in range(5, 0, -1):
+                for ii in range(1, 6):
+                    if matrix[i][ii] == desired_value:
+                        plucking_zero.append([i, ii])
+                        matrix[i][ii] = 0
+                        cursor.execute(f'UPDATE matrix SET i{ii} = 0 WHERE i = {i} AND id = {uid}')
+                        connect.commit()
+
+        elif meaning == -3:
+            for i in range(-1, 2):
+                for ii in range(-1, 2):
+                    current_line = selected_line + i
+                    current_column = column + ii
+                    if 0 < current_line < 6 and 0 < current_column < 6:
+                        matrix[current_line][current_column] = 0
+                        plucking_zero.append([selected_line + i, current_column])
+                        cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = {current_line} AND id = {uid}')
+                        connect.commit()
+                        
+        elif meaning == -4:
+            selected_line = int(callback.data[-3])
+            if selected_line > 0:
+                for i in range(1, 6):
+                    matrix[selected_line][i] = 0
+                    plucking_zero.append([selected_line, i])
+                cursor.execute(f'UPDATE matrix SET i1 = 0, i2 = 0, i3 = 0, i4 = 0, i5 = 0 WHERE i = {selected_line} AND id = {uid}')
+                connect.commit()
+            
+        elif meaning == -5:
+            for i in range(1, 6):
+                matrix[i][column] = 0
+                plucking_zero.append([i, column])
+                cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {i} AND id = {uid}')
+                connect.commit()
+                
     for point in plucking_zero:
         column = point[1]
-        line = point[0]
+        new_line = point[0]
         for i in range(point[0] + 1, 6):
             if matrix[i][column] == 0:
-                line = i
+                new_line = i
 
         values = False
-        for i in range(line, 0, -1):
+        for i in range(new_line, 0, -1):
             if matrix[i][column] != 0:
                 values = True
                 break
 
         if values:
-            while matrix[line][column] == 0:
-                for i in range(line, 1, -1):
+            while matrix[new_line][column] == 0:
+                for i in range(new_line, 1, -1):
                     matrix[i][column] = matrix[i - 1][column]
                     cursor.execute(f'UPDATE matrix SET i{column} = {matrix[i][column]} WHERE i = {i} AND id = {uid}')
                     connect.commit()
@@ -445,7 +453,7 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                     connect.commit()
                 await send_message(callback, uid, undo_number, text, inline_kb)
 
-            for i in range(line, 1, -1):
+            for i in range(new_line, 1, -1):
                 text, inline_kb = await find_coincidences_recursively(callback, uid, matrix, matrix[i][column], column, i, undo_number)
 
     return text, inline_kb
@@ -486,7 +494,7 @@ async def save_recover_undo(uid, save=True):
 
 
 async def get_undo(uid):
-    cursor.execute(f'SELECT i1_1, i1_2, i1_3, i1_4, i1_5, i1_6, i1_7, i1_8, i1_9, i1_10 FROM matrix WHERE i = 0 AND id = {uid}')
+    cursor.execute(f'SELECT i2_1, i2_2, i2_3, i2_4, i2_5, i2_6, i2_7, i2_8, i2_9, i2_10 FROM matrix WHERE i = 0 AND id = {uid}')
     result = cursor.fetchall()[0]
 
     undo_number = 0
@@ -494,7 +502,6 @@ async def get_undo(uid):
         if i != 0:
             undo_number += 1
 
-    # undo_number = f'{str(undo_number):>2}'
     if undo_number == 10:
         undo_number = str(undo_number)
     else:
