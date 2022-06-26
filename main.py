@@ -46,10 +46,10 @@ async def callback_query_handler(callback: CallbackQuery):
     cursor.execute(f'SELECT i, i1, i2, i3, i4, i5 FROM matrix WHERE id = {uid}')
     matrix = cursor.fetchall()
 
-    max_score = matrix[0][1]
-    current_score = matrix[0][2] + 1
-    cursor.execute(f'UPDATE matrix SET i1 = {max_score}, i2 = {current_score} WHERE i = 0 AND id = {uid}')
-    connect.commit()
+    # max_score = matrix[0][1]
+    # current_score = matrix[0][2] + 1
+    # cursor.execute(f'UPDATE matrix SET i1 = {max_score}, i2 = {current_score} WHERE i = 0 AND id = {uid}')
+    # connect.commit()
 
     current_column = int(callback.data[-1])
     current_line = 5
@@ -168,15 +168,16 @@ async def undo(callback: CallbackQuery):
 
 
 async def generate_meaning(use_buns=False):
-    maximum_limit = (25 - mood) ** 3
-    its_bun = randrange(-mood, maximum_limit, 1)
+    maximum_limit = (25 - mood) ** 3 + 25
+    minimum_limit = -mood
+    its_bun = randrange(minimum_limit, maximum_limit, 1)
     if its_bun > 0:
         meaning = 2 ** randrange(1, MAX_NUMBER_STEP, 1)
     else:
-        minimum_limit = mood // 5 * -1
-        meaning = randrange(minimum_limit, 1, 1)
-        # print(f'minimum_limit: {minimum_limit}')
-    # print(f'mood: {mood}, maximum_limit: {maximum_limit}, its_bun: {its_bun}, meaning: {meaning}')
+        minimum_limit_buns = mood // 5 * -1
+        meaning = randrange(minimum_limit_buns, 1, 1)
+        # print(f'minimum_limit_buns: {minimum_limit_buns}')
+    # print(f'minimum_limit: {minimum_limit}, maximum_limit: {maximum_limit}, its_bun: {its_bun}, meaning: {meaning}, mood: {mood}')
     return meaning
 
 
@@ -356,13 +357,21 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                 plucking_zero.append([line, column])
 
         if found > 0:
-            for _ in range (found):
+            for _ in range(found):
                 meaning *= 2
+                matrix[0][2] += 1
+
             if meaning > MAX_NUMBER:
                 meaning = 0
                 plucking_zero.append([new_line, column])
+                matrix[0][2] += 1
+
             matrix[new_line][column] = meaning
+
             cursor.execute(f'UPDATE matrix SET i{column} = {meaning} WHERE i = {new_line} AND id = {uid}')
+            connect.commit()
+
+            cursor.execute(f'UPDATE matrix SET i2 = {matrix[0][2]} WHERE i = 0 AND id = {uid}')
             connect.commit()
 
             await send_message(callback, uid, undo_number, text, inline_kb)
@@ -380,11 +389,16 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                 for ii in range(1, 6):
                     if matrix[i][ii] == desired_value:
                         new_meaning = desired_value * 2
+                        matrix[0][2] += 1
                         if new_meaning > MAX_NUMBER:
                             new_meaning = 0
                             plucking_zero.append([i, ii])
+                            matrix[0][2] += 1
                         matrix[i][ii] = new_meaning
                         cursor.execute(f'UPDATE matrix SET i{ii} = {new_meaning} WHERE i = {i} AND id = {uid}')
+                        connect.commit()
+
+                        cursor.execute(f'UPDATE matrix SET i2 = {matrix[0][2]} WHERE i = 0 AND id = {uid}')
                         connect.commit()
 
                         await send_message(callback, uid, undo_number, text, inline_kb)
@@ -400,6 +414,10 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                         matrix[i][ii] = 0
                         cursor.execute(f'UPDATE matrix SET i{ii} = 0 WHERE i = {i} AND id = {uid}')
                         connect.commit()
+                        matrix[0][2] += 1
+
+            cursor.execute(f'UPDATE matrix SET i2 = {matrix[0][2]} WHERE i = 0 AND id = {uid}')
+            connect.commit()
 
         elif meaning == -3:
             for i in range(-1, 2):
@@ -411,6 +429,10 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                         plucking_zero.append([selected_line + i, current_column])
                         cursor.execute(f'UPDATE matrix SET i{current_column} = 0 WHERE i = {current_line} AND id = {uid}')
                         connect.commit()
+                        matrix[0][2] += 1
+
+            cursor.execute(f'UPDATE matrix SET i2 = {matrix[0][2]} WHERE i = 0 AND id = {uid}')
+            connect.commit()
                         
         elif meaning == -4:
             selected_line = int(callback.data[-3])
@@ -418,7 +440,12 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                 for i in range(1, 6):
                     matrix[selected_line][i] = 0
                     plucking_zero.append([selected_line, i])
+                    matrix[0][2] += 1
+
                 cursor.execute(f'UPDATE matrix SET i1 = 0, i2 = 0, i3 = 0, i4 = 0, i5 = 0 WHERE i = {selected_line} AND id = {uid}')
+                connect.commit()
+
+                cursor.execute(f'UPDATE matrix SET i2 = {matrix[0][2]} WHERE i = 0 AND id = {uid}')
                 connect.commit()
             
         elif meaning == -5:
@@ -427,6 +454,10 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                 plucking_zero.append([i, column])
                 cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = {i} AND id = {uid}')
                 connect.commit()
+                matrix[0][2] += 1
+
+            cursor.execute(f'UPDATE matrix SET i2 = {matrix[0][2]} WHERE i = 0 AND id = {uid}')
+            connect.commit()
                 
     for point in plucking_zero:
         column = point[1]
@@ -447,10 +478,17 @@ async def find_coincidences_recursively(callback, uid, matrix, meaning, column, 
                     matrix[i][column] = matrix[i - 1][column]
                     cursor.execute(f'UPDATE matrix SET i{column} = {matrix[i][column]} WHERE i = {i} AND id = {uid}')
                     connect.commit()
+                    matrix[0][2] += 1
+
                 if matrix[1][column] != 0:
                     matrix[1][column] = 0
                     cursor.execute(f'UPDATE matrix SET i{column} = 0 WHERE i = 1 AND id = {uid}')
                     connect.commit()
+                    matrix[0][2] += 1
+
+                cursor.execute(f'UPDATE matrix SET i2 = {matrix[0][2]} WHERE i = 0 AND id = {uid}')
+                connect.commit()
+
                 await send_message(callback, uid, undo_number, text, inline_kb)
 
             for i in range(new_line, 1, -1):
